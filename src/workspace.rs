@@ -594,6 +594,14 @@ mod tests {
             None
         );
         assert_eq!(
+            parse_navigation_request_from(
+                "go to missing -> foo. find your purpose",
+                Some(&sibling_root)
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
             parse_navigation_request_from("go to tinygrad -> structure. list", Some(root.path()))
                 .unwrap(),
             None

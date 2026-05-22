@@ -70,9 +70,7 @@ pub(in crate::repl::chat) fn model_decided_root_for_prompt(
     prompt: &str,
     selected_root: Option<&Path>,
 ) -> Option<PathBuf> {
-    infer_natural_root(prompt)
-        .or_else(|| selected_root.map(Path::to_path_buf))
-        .or_else(|| effective_workspace_root(None))
+    task_root_for_prompt(prompt, selected_root)
 }
 
 pub(in crate::repl::chat) fn should_clarify_model_decided_root(prompt: &str) -> bool {

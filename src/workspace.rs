@@ -256,6 +256,17 @@ fn parse_arrow_chain_root_with_task(
         if part.is_empty() {
             continue;
         }
+        if index + 1 == parts.len() {
+            if let Some((next_root, trailing_task)) =
+                split_child_with_trailing_instruction(&root, part)?
+            {
+                root = next_root;
+                if trailing_task {
+                    has_task = true;
+                    break;
+                }
+            }
+        }
         let child = clean_navigation_target(part);
         if child.is_empty() {
             continue;
@@ -276,6 +287,24 @@ fn parse_arrow_chain_root_with_task(
         root,
         has_trailing_task: has_task,
     }))
+}
+
+fn split_child_with_trailing_instruction(
+    root: &Path,
+    part: &str,
+) -> Result<Option<(PathBuf, bool)>, String> {
+    let Some((child, instruction)) = part.split_once(". ") else {
+        return Ok(None);
+    };
+    let child = clean_navigation_target(child);
+    if child.is_empty() || instruction.trim().is_empty() {
+        return Ok(None);
+    }
+    let child_path = root.join(child);
+    if child_path.is_dir() && is_trailing_instruction_segment(instruction) {
+        return Ok(Some((canonical_dir(child_path)?, true)));
+    }
+    Ok(None)
 }
 
 fn is_trailing_instruction_segment(part: &str) -> bool {
@@ -507,6 +536,12 @@ mod tests {
 
         assert_eq!(
             infer_natural_root("go to my env -> tinygrad -> structure -> find your purpose")
+                .unwrap()
+                .as_path(),
+            home_structure.canonicalize().unwrap().as_path()
+        );
+        assert_eq!(
+            infer_natural_root("go to my env -> tinygrad -> structure. find your purpose")
                 .unwrap()
                 .as_path(),
             home_structure.canonicalize().unwrap().as_path()

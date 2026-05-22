@@ -127,6 +127,7 @@ fn has_task_phrase(prompt: &str) -> bool {
         "look through",
         "take a look at",
         "review",
+        "find your purpose",
         "read this",
         "read my files",
         "read files",
@@ -514,6 +515,14 @@ mod tests {
         );
         assert_eq!(
             classify_intent("go to my env folder and tell me what you find", false, None),
+            Intent::Task
+        );
+        assert_eq!(
+            classify_intent(
+                "go to my env -> tinygrad -> structure. find your purpose",
+                false,
+                None
+            ),
             Intent::Task
         );
         assert_eq!(

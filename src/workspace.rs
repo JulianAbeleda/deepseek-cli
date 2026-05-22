@@ -46,6 +46,9 @@ pub(crate) fn parse_navigation_request_from(
     prompt: &str,
     base_root: Option<&Path>,
 ) -> Result<Option<PathBuf>, String> {
+    if has_arrow_chain_trailing_task(prompt) {
+        return Ok(None);
+    }
     if let Some(parsed) = parse_arrow_chain_root_with_task(prompt, base_root)? {
         return Ok((!parsed.has_trailing_task).then_some(parsed.root));
     }
@@ -211,6 +214,25 @@ fn looks_like_path_target(target: &str) -> bool {
         || target.contains('/')
 }
 
+pub(crate) fn has_arrow_chain_trailing_task(prompt: &str) -> bool {
+    if !prompt.contains("->") {
+        return false;
+    }
+    let parts = prompt
+        .split("->")
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let Some(last) = parts.last() else {
+        return false;
+    };
+    if is_trailing_instruction_segment(last) {
+        return true;
+    }
+    last.split_once(". ")
+        .is_some_and(|(_, instruction)| is_trailing_instruction_segment(instruction))
+}
+
 struct ArrowChainRoot {
     root: PathBuf,
     has_trailing_task: bool,
@@ -374,8 +396,9 @@ pub(crate) fn path_boundary_clarify_text(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        infer_natural_root, parse_navigation_request, parse_navigation_request_from,
-        parse_root_command, path_boundary_clarify_text, root_status, update_selected_root_from,
+        has_arrow_chain_trailing_task, infer_natural_root, parse_navigation_request,
+        parse_navigation_request_from, parse_root_command, path_boundary_clarify_text, root_status,
+        update_selected_root_from,
     };
     use crate::test_support::env_lock;
     use std::fs;
@@ -515,8 +538,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let structure = root.path().join("tinygrad").join("structure");
         let home_structure = root.path().join("env").join("tinygrad").join("structure");
+        let sibling_root = root.path().join("env").join("tinygrad-arkey");
         fs::create_dir_all(&structure).unwrap();
         fs::create_dir_all(&home_structure).unwrap();
+        fs::create_dir_all(&sibling_root).unwrap();
         let previous_home = std::env::var_os("HOME");
         std::env::set_var("HOME", root.path());
 
@@ -547,6 +572,23 @@ mod tests {
             parse_navigation_request_from(
                 "go to tinygrad -> structure. find your purpose",
                 Some(root.path())
+            )
+            .unwrap(),
+            None
+        );
+        assert!(has_arrow_chain_trailing_task(
+            "go to my env -> tinygrad -> structure. find your purpose"
+        ));
+        assert!(has_arrow_chain_trailing_task(
+            "go to my env -> tinygrad -> structure -> find your purpose"
+        ));
+        assert!(!has_arrow_chain_trailing_task(
+            "go to my env -> tinygrad -> structure"
+        ));
+        assert_eq!(
+            parse_navigation_request_from(
+                "go to my env -> tinygrad -> structure. find your purpose",
+                Some(&sibling_root)
             )
             .unwrap(),
             None

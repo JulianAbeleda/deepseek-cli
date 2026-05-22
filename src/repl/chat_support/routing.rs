@@ -66,6 +66,27 @@ pub(in crate::repl::chat) fn task_root_for_prompt(
         .or_else(|| effective_workspace_root(None))
 }
 
+pub(in crate::repl::chat) fn model_decided_root_for_prompt(
+    prompt: &str,
+    selected_root: Option<&Path>,
+) -> Option<PathBuf> {
+    infer_natural_root(prompt)
+        .or_else(|| selected_root.map(Path::to_path_buf))
+        .or_else(|| effective_workspace_root(None))
+}
+
+pub(in crate::repl::chat) fn should_clarify_model_decided_root(prompt: &str) -> bool {
+    let normalized = normalize_workspace_prompt(prompt);
+    if normalized.is_empty() || is_workspace_chat_followup(&normalized) {
+        return false;
+    }
+    is_workspace_agent_prompt(prompt)
+        || matches!(
+            classify_intent(prompt, false, None),
+            Intent::Task | Intent::Clarify
+        )
+}
+
 pub(in crate::repl::chat) fn workspace_agent_root_for_prompt(
     prompt: &str,
     selected_root: Option<&Path>,

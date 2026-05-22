@@ -1,8 +1,9 @@
 use super::commands::{is_end_command, is_exit_command, parse_agent_task_command};
 use super::{
     approval_decision_for_choice, approval_grant, cap_interactive_memory, context_scan_status,
-    interactive_chat_status, is_workspace_agent_prompt, parse_shell_read_command,
-    rendered_markdown_effective_stream_delay, rendered_markdown_stream_chunks, shell_pwd_text,
+    interactive_chat_status, is_workspace_agent_prompt, model_decided_root_for_prompt,
+    parse_shell_read_command, rendered_markdown_effective_stream_delay,
+    rendered_markdown_stream_chunks, shell_pwd_text, should_clarify_model_decided_root,
     task_root_for_prompt, terminal_stream_chunk_delay, workspace_agent_root_for_prompt,
     ApprovalGrant, ShellReadCommand,
 };
@@ -132,6 +133,23 @@ fn selected_root_routes_workspace_prompts_to_agent() {
 }
 
 #[test]
+fn model_decided_routing_uses_safe_root_for_any_prompt() {
+    let selected = Path::new("/tmp/selected-workspace");
+    for prompt in [
+        "hi",
+        "find your purpose",
+        "does that make sense",
+        "what is this repo trying to do",
+    ] {
+        assert_eq!(
+            model_decided_root_for_prompt(prompt, Some(selected)),
+            Some(selected.to_path_buf()),
+            "{prompt}"
+        );
+    }
+}
+
+#[test]
 fn arrow_chain_trailing_task_routes_to_agent_root() {
     let _guard = env_lock();
     let root = tempfile::tempdir().unwrap();
@@ -162,6 +180,16 @@ fn arrow_chain_trailing_task_routes_to_agent_root() {
     } else {
         std::env::remove_var("HOME");
     }
+}
+
+#[test]
+fn no_root_model_decided_prompts_clarify_only_when_file_shaped() {
+    assert!(!should_clarify_model_decided_root("hi"));
+    assert!(!should_clarify_model_decided_root("what is a repo"));
+    assert!(should_clarify_model_decided_root(
+        "what is this repo trying to do"
+    ));
+    assert!(should_clarify_model_decided_root("read Cargo.toml"));
 }
 
 #[test]

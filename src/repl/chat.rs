@@ -570,11 +570,14 @@ fn run_interactive_chat_docked(model: &str, temperature: Option<f32>) -> Result<
             continue;
         }
         if !runtime_state.legacy_routing {
-            if let Some(root) = workspace_agent_root_for_prompt(prompt, selected_root.as_deref()) {
+            if let Some(root) = model_decided_root_for_prompt(prompt, selected_root.as_deref()) {
                 if let Some(path) = path_boundary_violation(prompt, &root) {
                     composer.print_above(&path_boundary_clarify_text(&root, &path))?;
                     continue;
                 }
+            } else if should_clarify_model_decided_root(prompt) {
+                composer.print_above(&clarify_route_text())?;
+                continue;
             }
             active_tool_steps.clear();
             last_progress_text.clear();

@@ -16,7 +16,7 @@ pub(in crate::repl::chat) fn spawn_docked_turn(
         }
     }
     if !legacy_routing {
-        if let Some(root) = workspace_agent_root_for_prompt(&prompt, selected_root) {
+        if let Some(root) = model_decided_root_for_prompt(&prompt, selected_root) {
             if path_boundary_violation(&prompt, &root).is_none() {
                 return spawn_agent_turn(prompt, root, model, temperature);
             }

@@ -313,6 +313,9 @@ fn is_trailing_instruction_segment(part: &str) -> bool {
         return false;
     }
     let lowered = part.to_lowercase();
+    if is_single_word_task_instruction(&lowered) {
+        return true;
+    }
     if [" folder", " directory", " repo", " repository"]
         .iter()
         .any(|suffix| lowered.ends_with(suffix))
@@ -320,6 +323,13 @@ fn is_trailing_instruction_segment(part: &str) -> bool {
         return false;
     }
     part.ends_with('?') || part.split_whitespace().nth(1).is_some()
+}
+
+fn is_single_word_task_instruction(part: &str) -> bool {
+    matches!(
+        part,
+        "analyze" | "audit" | "inspect" | "list" | "read" | "review" | "scan" | "summarize"
+    )
 }
 
 fn canonical_dir(path: PathBuf) -> Result<PathBuf, String> {
@@ -531,6 +541,24 @@ mod tests {
                 Some(root.path())
             )
             .unwrap(),
+            None
+        );
+        assert_eq!(
+            parse_navigation_request_from(
+                "go to tinygrad -> structure. find your purpose",
+                Some(root.path())
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            parse_navigation_request_from("go to tinygrad -> structure. list", Some(root.path()))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            parse_navigation_request_from("go to tinygrad -> structure -> list", Some(root.path()))
+                .unwrap(),
             None
         );
 

@@ -407,10 +407,11 @@ fn parse_arrow_chain_root_with_task(
             continue;
         }
         if index + 1 == parts.len() {
-            if let Some((next_root, trailing_task)) =
+            if let Some((resolved, trailing_task)) =
                 split_child_with_trailing_instruction(&root, part)?
             {
-                root = next_root;
+                root = resolved.path;
+                source = source.merge(resolved.source);
                 if trailing_task {
                     has_task = true;
                     break;
@@ -456,7 +457,7 @@ fn parse_arrow_chain_root_with_task(
 fn split_child_with_trailing_instruction(
     root: &Path,
     part: &str,
-) -> Result<Option<(PathBuf, bool)>, String> {
+) -> Result<Option<(ResolvedRoot, bool)>, String> {
     let Some((child, instruction)) = part.split_once(". ") else {
         return Ok(None);
     };
@@ -466,7 +467,15 @@ fn split_child_with_trailing_instruction(
     }
     let child_path = root.join(child);
     if child_path.is_dir() && is_trailing_instruction_segment(instruction) {
-        return Ok(Some((canonical_dir(child_path)?, true)));
+        return Ok(Some((
+            ResolvedRoot::exact(canonical_dir(child_path)?),
+            true,
+        )));
+    }
+    if !looks_like_path_target(child) && is_trailing_instruction_segment(instruction) {
+        if let Ok(resolved) = fuzzy_child_dir(root, child) {
+            return Ok(Some((resolved, true)));
+        }
     }
     Ok(None)
 }
@@ -895,6 +904,39 @@ mod tests {
                 requested: "pkosv2".to_string(),
                 matched: "pkos_v0.2".to_string(),
             }
+        );
+
+        if let Some(previous_home) = previous_home {
+            std::env::set_var("HOME", previous_home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn dotted_arrow_chain_task_can_fuzzy_match_final_directory_segment() {
+        let _guard = env_lock();
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("env").join("pkos_v0.2");
+        fs::create_dir_all(&project).unwrap();
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", root.path());
+
+        let resolved =
+            infer_natural_root_with_source("go to my env -> pkosv2. find your purpose").unwrap();
+
+        assert_eq!(
+            resolved.path.as_path(),
+            project.canonicalize().unwrap().as_path()
+        );
+        assert_eq!(
+            resolved.source.fuzzy_note().as_deref(),
+            Some("matched: pkosv2 -> pkos_v0.2")
+        );
+        assert_eq!(
+            parse_navigation_request_with_source("go to my env -> pkosv2. find your purpose", None)
+                .unwrap(),
+            None
         );
 
         if let Some(previous_home) = previous_home {

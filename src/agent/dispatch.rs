@@ -32,7 +32,10 @@ pub(super) fn approval_request(
                 tool: call.name.clone(),
                 root: workspace.root.clone(),
                 scope: ApprovalScope::Shell,
-                summary: approval_text::shell_summary(cwd, reason, command),
+                summary: approval_text::with_root_note(
+                    approval_text::shell_summary(cwd, reason, command),
+                    workspace.root_note.as_deref(),
+                ),
             })
         }
         "propose_patch" => {
@@ -61,7 +64,37 @@ pub(super) fn approval_request(
                 tool: call.name.clone(),
                 root: workspace.root.clone(),
                 scope: ApprovalScope::Write,
-                summary: approval_text::patch_summary(path, reason, find, replace),
+                summary: approval_text::with_root_note(
+                    approval_text::patch_summary(path, reason, find, replace),
+                    workspace.root_note.as_deref(),
+                ),
+            })
+        }
+        "create_file" => {
+            let path = call
+                .arguments
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or("<missing path>");
+            let reason = call
+                .arguments
+                .get("reason")
+                .and_then(|value| value.as_str())
+                .unwrap_or("no reason provided");
+            let content = call
+                .arguments
+                .get("content")
+                .and_then(|value| value.as_str())
+                .unwrap_or("<missing content>");
+            Some(ApprovalRequest {
+                step,
+                tool: call.name.clone(),
+                root: workspace.root.clone(),
+                scope: ApprovalScope::Write,
+                summary: approval_text::with_root_note(
+                    approval_text::create_file_summary(path, reason, content),
+                    workspace.root_note.as_deref(),
+                ),
             })
         }
         _ => None,
@@ -82,6 +115,7 @@ pub(super) fn execute_tool(
         "fetch_url" => internet::fetch_url_tool(&call.arguments),
         "run_shell" => write_tools::run_shell(workspace, call, approval_mode),
         "propose_patch" => write_tools::propose_patch(workspace, call, approval_mode),
+        "create_file" => write_tools::create_file(workspace, call, approval_mode),
         other => format!("error: unknown agent tool `{other}`"),
     }
 }

@@ -80,7 +80,7 @@ pub(super) fn append_parse_failure_retry_note(transcript: &mut Vec<TranscriptEnt
 }
 
 pub(super) fn decision_retry_prompt() -> String {
-    "Your previous response was either invalid JSON or valid JSON without an actionable decision. Return exactly one JSON object with one of these shapes: {\"content\":\"final answer\",\"tool_calls\":null}, {\"content\":null,\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"inspect_tree\",\"arguments\":\"{\\\"path\\\":\\\".\\\",\\\"depth\\\":2}\"}}]}, or {\"blocked\":\"short reason\"}. No prose outside JSON.".to_string()
+    "Your previous response was either invalid JSON or valid JSON without an actionable decision. Return exactly one JSON object with one of these shapes: {\"content\":\"final answer\",\"tool_calls\":null}, {\"content\":null,\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"inspect_tree\",\"arguments\":\"{\\\"path\\\":\\\".\\\",\\\"depth\\\":2}\"}}]}, or {\"blocked\":\"short reason\"}. No prose outside JSON. If you finish, put polished Markdown in the `content` string, start substantial answers with a `##` heading, cite concrete files/paths/tool observations when available, and lead reviews with findings before summary.".to_string()
 }
 
 pub(super) fn fail_with_transcript(

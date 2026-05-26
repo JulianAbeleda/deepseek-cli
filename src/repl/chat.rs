@@ -19,8 +19,10 @@ use crate::session::{self, SessionState};
 use crate::terminal_markdown::render_terminal_markdown;
 use crate::ui;
 use crate::workspace::{
-    effective_workspace_root, infer_natural_root, parse_navigation_request_from,
-    path_boundary_clarify_text, root_status, update_selected_root, update_selected_root_from,
+    effective_workspace_root, effective_workspace_root_with_source, infer_natural_root_with_source,
+    parse_navigation_request_with_source, path_boundary_clarify_text, root_status,
+    root_status_with_source, update_selected_root, update_selected_root_from, ResolvedRoot,
+    RootSource,
 };
 
 use super::commands;
@@ -512,15 +514,15 @@ fn run_interactive_chat_docked(model: &str, temperature: Option<f32>) -> Result<
             composer.print_above(&root_status(selected_root.as_deref(), true))?;
             continue;
         }
-        match parse_navigation_request_from(prompt, selected_root.as_deref()) {
+        match parse_navigation_request_with_source(prompt, selected_root.as_deref()) {
             Ok(Some(root)) => {
-                if selected_root.as_deref() != Some(root.as_path()) {
+                if selected_root.as_deref() != Some(root.path.as_path()) {
                     previous_selected_root = selected_root.clone();
                 }
-                selected_root = Some(root);
+                selected_root = Some(root.path.clone());
                 clear_session_agent_root()?;
                 save_selected_root(selected_root.as_deref())?;
-                composer.print_above(&root_status(selected_root.as_deref(), true))?;
+                composer.print_above(&root_status_with_source(Some(&root)))?;
                 continue;
             }
             Ok(None) => {}
@@ -570,10 +572,15 @@ fn run_interactive_chat_docked(model: &str, temperature: Option<f32>) -> Result<
             continue;
         }
         if !runtime_state.legacy_routing {
-            if let Some(root) = model_decided_root_for_prompt(prompt, selected_root.as_deref()) {
-                if let Some(path) = path_boundary_violation(prompt, &root) {
-                    composer.print_above(&path_boundary_clarify_text(&root, &path))?;
+            if let Some(root) =
+                model_decided_root_for_prompt_with_source(prompt, selected_root.as_deref())
+            {
+                if let Some(path) = path_boundary_violation(prompt, &root.path) {
+                    composer.print_above(&path_boundary_clarify_text(&root.path, &path))?;
                     continue;
+                }
+                if root.source.fuzzy_note().is_some() {
+                    composer.print_above(&root_status_with_source(Some(&root)))?;
                 }
             } else if should_clarify_model_decided_root(prompt) {
                 composer.print_above(&clarify_route_text())?;
@@ -593,17 +600,23 @@ fn run_interactive_chat_docked(model: &str, temperature: Option<f32>) -> Result<
             continue;
         }
 
-        if let Some(root) = workspace_agent_root_for_prompt(prompt, selected_root.as_deref()) {
-            if let Some(path) = path_boundary_violation(prompt, &root) {
-                composer.print_above(&path_boundary_clarify_text(&root, &path))?;
+        if let Some(root) =
+            workspace_agent_root_for_prompt_with_source(prompt, selected_root.as_deref())
+        {
+            if let Some(path) = path_boundary_violation(prompt, &root.path) {
+                composer.print_above(&path_boundary_clarify_text(&root.path, &path))?;
                 continue;
+            }
+            if root.source.fuzzy_note().is_some() {
+                composer.print_above(&root_status_with_source(Some(&root)))?;
             }
             active_tool_steps.clear();
             last_progress_text.clear();
             context_scan_started = Some(start_context_scan(&mut composer, &active_tool_steps)?);
-            in_flight = Some(spawn_agent_turn(
+            in_flight = Some(spawn_agent_turn_with_root_note(
                 prompt.to_string(),
-                root,
+                root.path,
+                root.source.fuzzy_note(),
                 current_model.clone(),
                 temperature,
             ));

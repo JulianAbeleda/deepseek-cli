@@ -8,6 +8,7 @@ pub const DEFAULT_MAX_STEPS: usize = 1000;
 pub struct AgentConfig {
     pub root: PathBuf,
     pub max_steps: usize,
+    pub root_note: Option<String>,
 }
 
 impl AgentConfig {
@@ -15,7 +16,13 @@ impl AgentConfig {
         Self {
             root: root.into(),
             max_steps: max_steps.max(1),
+            root_note: None,
         }
+    }
+
+    pub fn root_note(mut self, note: impl Into<String>) -> Self {
+        self.root_note = Some(note.into());
+        self
     }
 }
 

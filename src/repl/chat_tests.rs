@@ -2,10 +2,10 @@ use super::commands::{is_end_command, is_exit_command, parse_agent_task_command}
 use super::{
     approval_decision_for_choice, approval_grant, cap_interactive_memory, context_scan_status,
     interactive_chat_status, is_workspace_agent_prompt, model_decided_root_for_prompt,
-    parse_shell_read_command, rendered_markdown_effective_stream_delay,
-    rendered_markdown_stream_chunks, shell_pwd_text, should_clarify_model_decided_root,
-    task_root_for_prompt, terminal_stream_chunk_delay, workspace_agent_root_for_prompt,
-    ApprovalGrant, ShellReadCommand,
+    model_decided_root_for_prompt_with_source, parse_shell_read_command,
+    rendered_markdown_effective_stream_delay, rendered_markdown_stream_chunks, shell_pwd_text,
+    should_clarify_model_decided_root, task_root_for_prompt, terminal_stream_chunk_delay,
+    workspace_agent_root_for_prompt, ApprovalGrant, ShellReadCommand,
 };
 use crate::agent;
 use crate::input::ApprovalChoice;
@@ -173,6 +173,38 @@ fn arrow_chain_trailing_task_routes_to_agent_root() {
         )
         .as_deref(),
         Some(structure.canonicalize().unwrap().as_path())
+    );
+
+    if let Some(previous_home) = previous_home {
+        std::env::set_var("HOME", previous_home);
+    } else {
+        std::env::remove_var("HOME");
+    }
+}
+
+#[test]
+fn model_decided_routing_reports_fuzzy_arrow_chain_root() {
+    let _guard = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let structure = root.path().join("env").join("pkos_v0.2").join("structure");
+    fs::create_dir_all(&structure).unwrap();
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", root.path());
+
+    let resolved = model_decided_root_for_prompt_with_source(
+        "go to my env -> pkosv2 -> structure. find your purpose",
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved.path.as_path(),
+        structure.canonicalize().unwrap().as_path()
+    );
+    assert_eq!(resolved.source.label(), "fuzzy");
+    assert_eq!(
+        resolved.source.fuzzy_note().as_deref(),
+        Some("matched: pkosv2 -> pkos_v0.2")
     );
 
     if let Some(previous_home) = previous_home {

@@ -39,7 +39,7 @@ const PLACEHOLDER_FINAL_CONTENT: &str = "answer with concrete findings";
 
 pub(super) fn system_prompt(root: &Path) -> String {
     format!(
-        r#"You are DeepSeek local agent mode. Work only inside this read-only workspace:
+        r#"You are DeepSeek local agent mode. Work only inside this workspace:
 {}
 
 Return exactly one JSON object and no prose. Use this OpenAI-compatible shape:
@@ -74,8 +74,9 @@ Available read-only tools:
 Approval-gated tool:
 - run_shell: {{"command":"command to run","cwd":"relative/path","reason":"why this is needed"}}
 - propose_patch: {{"path":"relative/file","find":"exact existing text","replace":"replacement text","reason":"why this edit is needed"}}
+- create_file: {{"path":"relative/new-file","content":"complete file content","reason":"why this file is needed"}}
 
-No raw writes, creates, deletes, or paths outside the workspace are available. Only web_search and fetch_url may access the network. Shell commands and exact text replacements require explicit user approval and may be denied."#,
+Use approval-gated tools for workspace mutations. When the user asks you to create a new file, request create_file instead of giving shell commands or saying you cannot write files. When the user asks you to edit an existing file, request propose_patch. No raw writes, deletes, or paths outside the workspace are available. Only create_file can create files, and only propose_patch can edit existing files. Only web_search and fetch_url may access the network. Shell commands, file creation, and exact text replacements require explicit user approval and may be denied."#,
         root.display()
     )
 }
@@ -170,6 +171,18 @@ pub(super) fn native_tool_definitions() -> Vec<ChatTool> {
                     string_property("reason", "Reason this edit is needed."),
                 ],
                 vec!["path", "find", "replace", "reason"],
+            ),
+        ),
+        tool(
+            "create_file",
+            "Create a new file with complete content after explicit approval.",
+            object_schema(
+                vec![
+                    string_property("path", "Relative workspace file path to create."),
+                    string_property("content", "Complete UTF-8 file content."),
+                    string_property("reason", "Reason this file is needed."),
+                ],
+                vec!["path", "content", "reason"],
             ),
         ),
     ]

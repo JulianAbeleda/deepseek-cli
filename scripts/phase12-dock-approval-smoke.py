@@ -34,21 +34,36 @@ def write_fake_curl(directory):
             import sys
 
             config = sys.stdin.read()
-            if "inspect shell denial gate" in config and "Tool result for step" in config:
+            has_tool_result = (
+                '"role":"tool"' in config
+                or '\\"role\\":\\"tool\\"' in config
+                or "tool_call_id" in config
+                or "denied: run_shell" in config
+                or "denied: propose_patch" in config
+                or "denied: create_file" in config
+                or "ok: patched" in config
+                or "ok: created" in config
+                or "status:" in config
+            )
+            if "inspect shell denial gate" in config and has_tool_result:
                 decision = {"final_answer": "shell denied through dock"}
-            elif "inspect shell approval gate" in config and "Tool result for step" in config:
+            elif "inspect shell approval gate" in config and has_tool_result:
                 decision = {"final_answer": "shell approved through dock"}
-            elif "inspect patch denial gate" in config and "Tool result for step" in config:
+            elif "inspect patch denial gate" in config and has_tool_result:
                 decision = {"final_answer": "patch denied through dock"}
-            elif "inspect patch approval gate" in config and "Tool result for step" in config:
+            elif "inspect patch approval gate" in config and has_tool_result:
                 decision = {"final_answer": "patch approved through dock"}
-            elif "inspect patch session gate one" in config and "Tool result for step" in config:
+            elif "inspect create denial gate" in config and has_tool_result:
+                decision = {"final_answer": "create denied through dock"}
+            elif "inspect create approval gate" in config and has_tool_result:
+                decision = {"final_answer": "create approved through dock"}
+            elif "inspect patch session gate one" in config and has_tool_result:
                 decision = {"final_answer": "patch session approval one done"}
-            elif "inspect patch session gate two" in config and "Tool result for step" in config:
+            elif "inspect patch session gate two" in config and has_tool_result:
                 decision = {"final_answer": "patch session approval two done"}
-            elif "inspect patch other root gate" in config and "Tool result for step" in config:
+            elif "inspect patch other root gate" in config and has_tool_result:
                 decision = {"final_answer": "patch other root done"}
-            elif "Tool result for step" in config:
+            elif has_tool_result:
                 decision = {"final_answer": "unexpected tool result"}
             elif "inspect shell denial gate" in config:
                 decision = {
@@ -97,6 +112,30 @@ def write_fake_curl(directory):
                             "find": "workspace smoke",
                             "replace": "workspace smoke approved",
                             "reason": "phase12 patch approval smoke",
+                        },
+                    },
+                }
+            elif "inspect create denial gate" in config:
+                decision = {
+                    "thought": "request file creation and expect user denial",
+                    "tool": {
+                        "name": "create_file",
+                        "arguments": {
+                            "path": "hello.py",
+                            "content": "print('denied')\n",
+                            "reason": "phase12 create denial smoke",
+                        },
+                    },
+                }
+            elif "inspect create approval gate" in config:
+                decision = {
+                    "thought": "request file creation and expect user approval",
+                    "tool": {
+                        "name": "create_file",
+                        "arguments": {
+                            "path": "hello.py",
+                            "content": "print('hello')\n",
+                            "reason": "phase12 create approval smoke",
                         },
                     },
                 }
@@ -313,6 +352,57 @@ def main():
             readme = (workspace / "README.md").read_text(encoding="utf-8")
             if readme != "workspace smoke approved\n":
                 raise AssertionError(f"approved patch did not update README.md: {readme!r}")
+            assert_not_legacy_handoff(screen)
+
+            os.write(master, b"inspect create denial gate\r")
+            wait_for(
+                lambda: screen.contains("create_file requires approval")
+                and screen.contains("path: hello.py"),
+                master,
+                screen,
+                "create denial request",
+            )
+            os.write(master, b"n\r")
+            wait_for(
+                lambda: screen.contains("approval: denied create_file"),
+                master,
+                screen,
+                "create denial accepted",
+            )
+            wait_for(
+                lambda: screen.contains("create denied through dock"),
+                master,
+                screen,
+                "create denial final answer",
+            )
+            if (workspace / "hello.py").exists():
+                raise AssertionError("denied create_file created hello.py")
+            assert_not_legacy_handoff(screen)
+
+            os.write(master, b"inspect create approval gate\r")
+            wait_for(
+                lambda: screen.contains("create_file requires approval")
+                and screen.contains("path: hello.py"),
+                master,
+                screen,
+                "create approval request",
+            )
+            os.write(master, b"1\r")
+            wait_for(
+                lambda: screen.contains("approval: approved create_file"),
+                master,
+                screen,
+                "create approval accepted",
+            )
+            wait_for(
+                lambda: screen.contains("create approved through dock"),
+                master,
+                screen,
+                "create approval final answer",
+            )
+            hello = (workspace / "hello.py").read_text(encoding="utf-8")
+            if hello != "print('hello')\n":
+                raise AssertionError(f"approved create_file did not write hello.py: {hello!r}")
             assert_not_legacy_handoff(screen)
 
             os.write(master, b"inspect patch session gate one\r")

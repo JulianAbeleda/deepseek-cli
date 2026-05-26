@@ -9,6 +9,7 @@ use super::workspace::Workspace;
 use super::{ApprovalMode, ToolCall};
 
 const MAX_PATCH_BYTES: u64 = 64 * 1024;
+const MAX_CREATE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub(super) struct PreparedPatch {
@@ -86,6 +87,44 @@ pub(super) fn propose_patch(
     }
 }
 
+pub(super) fn create_file(
+    workspace: &Workspace,
+    call: &ToolCall,
+    approval_mode: ApprovalMode,
+) -> String {
+    let path = match arg_path(call) {
+        Ok(path) => path,
+        Err(err) => return format!("error: {err}"),
+    };
+    let content = match call
+        .arguments
+        .get("content")
+        .and_then(|value| value.as_str())
+    {
+        Some(content) => content.to_string(),
+        None => return "error: missing string `content`".to_string(),
+    };
+    let reason = match arg_string(call, "reason") {
+        Ok(reason) => reason,
+        Err(err) => return format!("error: {err}"),
+    };
+    if content.len() > MAX_CREATE_BYTES {
+        return format!("error: content exceeds create cap of {MAX_CREATE_BYTES} bytes");
+    }
+    let path = match workspace.resolve_new_file(&path) {
+        Ok(path) => path,
+        Err(err) => return format!("error: {err}"),
+    };
+    let display_path = workspace.display_path(&path);
+    if !approve_create_file(&display_path, &reason, &content, approval_mode) {
+        return "denied: create_file requires explicit interactive approval".to_string();
+    }
+    match atomic_write(&path, content.as_bytes()) {
+        Ok(()) => format!("ok: created {display_path}"),
+        Err(err) => format!("error: failed to create file: {err}"),
+    }
+}
+
 pub(super) fn prepare_patch(
     workspace: &Workspace,
     call: &ToolCall,
@@ -158,6 +197,35 @@ fn approve_patch(patch: &PreparedPatch, approval_mode: ApprovalMode) -> bool {
     eprintln!("--- replace ---");
     eprintln!("replace:\n{}", redact_text(&cap_text(&patch.replace, 1200)));
     eprint!("Type yes apply to apply this edit: ");
+    let _ = io::stderr().flush();
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .map(|_| answer.trim() == "yes apply")
+        .unwrap_or(false)
+}
+
+fn approve_create_file(
+    path: &str,
+    reason: &str,
+    content: &str,
+    approval_mode: ApprovalMode,
+) -> bool {
+    if approval_mode == ApprovalMode::Approved {
+        return true;
+    }
+    if approval_mode == ApprovalMode::Deny {
+        return false;
+    }
+    if !io::stdin().is_terminal() {
+        return false;
+    }
+    eprintln!("agent requests file creation");
+    eprintln!("path: {path}");
+    eprintln!("reason: {}", redact_text(&cap_text(reason, 1200)));
+    eprintln!("--- content ---");
+    eprintln!("{}", redact_text(&cap_text(content, 1200)));
+    eprint!("Type yes apply to create this file: ");
     let _ = io::stderr().flush();
     let mut answer = String::new();
     io::stdin()

@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::cancel::CancellationToken;
 use crate::provider::PROVIDER_STATE_DIR;
 
+use super::super::notes::decision_retry_prompt;
 use super::super::workspace::Workspace;
 use super::super::write_tools::{apply_prepared_patch, prepare_patch};
 use super::{
@@ -71,6 +72,17 @@ fn system_prompt_includes_web_tools() {
     assert!(prompt.contains("- web_search:"));
     assert!(prompt.contains("- fetch_url:"));
     assert!(prompt.contains("Only web_search and fetch_url may access the network"));
+}
+
+#[test]
+fn system_prompt_includes_approval_gated_file_creation() {
+    let prompt = system_prompt(std::path::Path::new("/tmp/workspace"));
+    assert!(prompt.contains("- create_file:"));
+    assert!(prompt.contains("Only create_file can create files"));
+    assert!(prompt.contains("request create_file instead of giving shell commands"));
+    assert!(prompt.contains("file creation"));
+    assert!(prompt.contains("require explicit user approval"));
+    assert!(!prompt.contains("read-only workspace"));
 }
 
 #[test]
@@ -321,6 +333,14 @@ fn parser_repair_notes_are_sanitized_transcript_entries() {
 }
 
 #[test]
+fn retry_prompt_restates_final_answer_style() {
+    let prompt = decision_retry_prompt();
+    assert!(prompt.contains("polished Markdown"));
+    assert!(prompt.contains("##` heading"));
+    assert!(prompt.contains("lead reviews with findings"));
+}
+
+#[test]
 fn no_action_retry_note_is_sanitized_transcript_entry() {
     let mut transcript = Vec::new();
     append_no_action_retry_note(&mut transcript);
@@ -557,6 +577,12 @@ fn native_tool_results_are_appended_as_tool_messages() {
     .unwrap();
     assert_eq!(outcome.answer, "done");
     let second_call = seen_messages.get(1).unwrap();
+    assert!(second_call.iter().any(|message| {
+        message.role == "system"
+            && message
+                .content
+                .contains("Continue using the agent response contract")
+    }));
     let assistant = second_call
         .iter()
         .find(|message| message.role == "assistant" && message.tool_calls.is_some())
@@ -917,6 +943,33 @@ fn builds_patch_approval_request() {
 }
 
 #[test]
+fn builds_create_file_approval_request() {
+    let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
+    let request = super::approval_request(
+        &workspace,
+        2,
+        &ToolCall {
+            id: None,
+            name: "create_file".to_string(),
+            arguments: json!({
+                "path":"notes/new.md",
+                "content":"# New\n",
+                "reason":"create profile"
+            }),
+        },
+    )
+    .unwrap();
+    assert_eq!(request.step, 2);
+    assert_eq!(request.tool, "create_file");
+    assert_eq!(request.root, workspace.root);
+    assert_eq!(request.scope, ApprovalScope::Write);
+    assert!(request.summary.contains("approval required: create_file"));
+    assert!(request.summary.contains("path: notes/new.md"));
+    assert!(request.summary.contains("reason: create profile"));
+    assert!(request.summary.contains("--- content ---\n# New\n"));
+}
+
+#[test]
 fn approved_approval_mode_applies_patch_once() {
     let root = std::env::temp_dir().join(format!(
         "deepseek-agent-patch-approved-test-{}",
@@ -941,6 +994,35 @@ fn approved_approval_mode_applies_patch_once() {
     );
     assert!(result.contains("ok: patched note.txt"));
     assert_eq!(fs::read_to_string(root.join("note.txt")).unwrap(), "new");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn approved_approval_mode_creates_file_once() {
+    let root = std::env::temp_dir().join(format!(
+        "deepseek-agent-create-approved-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("notes")).unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let result = super::execute_tool(
+        &workspace,
+        &ToolCall {
+            id: None,
+            name: "create_file".to_string(),
+            arguments: json!({
+                "path":"notes/new.md",
+                "content":"# New\n",
+                "reason":"test approved create"
+            }),
+        },
+        ApprovalMode::Approved,
+    );
+    assert!(result.contains("ok: created notes/new.md"));
+    assert_eq!(
+        fs::read_to_string(root.join("notes/new.md")).unwrap(),
+        "# New\n"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -986,6 +1068,31 @@ fn propose_patch_denies_without_interactive_approval() {
 }
 
 #[test]
+fn create_file_denies_without_interactive_approval() {
+    let root = std::env::temp_dir().join(format!(
+        "deepseek-agent-create-deny-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let result = execute_tool(
+        &workspace,
+        &ToolCall {
+            id: None,
+            name: "create_file".to_string(),
+            arguments: json!({
+                "path":"note.txt",
+                "content":"new",
+                "reason":"test"
+            }),
+        },
+    );
+    assert!(result.contains("requires explicit interactive approval"));
+    assert!(!root.join("note.txt").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn propose_patch_requires_args() {
     let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
     let result = execute_tool(
@@ -994,6 +1101,20 @@ fn propose_patch_requires_args() {
             id: None,
             name: "propose_patch".to_string(),
             arguments: json!({"path":"Cargo.toml","find":"[package]","replace":"[package]"}),
+        },
+    );
+    assert!(result.contains("missing non-empty `reason`"));
+}
+
+#[test]
+fn create_file_requires_args() {
+    let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
+    let result = execute_tool(
+        &workspace,
+        &ToolCall {
+            id: None,
+            name: "create_file".to_string(),
+            arguments: json!({"path":"new.txt","content":"hello"}),
         },
     );
     assert!(result.contains("missing non-empty `reason`"));
@@ -1035,6 +1156,57 @@ fn propose_patch_rejects_path_escape_and_missing_file() {
         },
     );
     assert!(missing.contains("No such file") || missing.contains("not found"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn create_file_rejects_path_escape_existing_file_and_missing_parent() {
+    let root = std::env::temp_dir().join(format!(
+        "deepseek-agent-create-path-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("existing.txt"), "old").unwrap();
+    let workspace = Workspace::new(root.clone()).unwrap();
+    let escaped = execute_tool(
+        &workspace,
+        &ToolCall {
+            id: None,
+            name: "create_file".to_string(),
+            arguments: json!({
+                "path":"../outside.txt",
+                "content":"new",
+                "reason":"test"
+            }),
+        },
+    );
+    assert!(escaped.contains("path must stay inside workspace root"));
+    let existing = execute_tool(
+        &workspace,
+        &ToolCall {
+            id: None,
+            name: "create_file".to_string(),
+            arguments: json!({
+                "path":"existing.txt",
+                "content":"new",
+                "reason":"test"
+            }),
+        },
+    );
+    assert!(existing.contains("path already exists"));
+    let missing_parent = execute_tool(
+        &workspace,
+        &ToolCall {
+            id: None,
+            name: "create_file".to_string(),
+            arguments: json!({
+                "path":"missing/new.txt",
+                "content":"new",
+                "reason":"test"
+            }),
+        },
+    );
+    assert!(missing_parent.contains("No such file") || missing_parent.contains("not found"));
     let _ = fs::remove_dir_all(root);
 }
 

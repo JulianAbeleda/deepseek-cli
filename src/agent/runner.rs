@@ -22,6 +22,8 @@ use super::types::{
 };
 use super::workspace::Workspace;
 
+const FOLLOWUP_STYLE_REMINDER: &str = r#"Continue using the agent response contract. Return exactly one JSON object and no prose. If you are done, put polished Markdown in the `content` string, start substantial answers with a `##` heading, cite concrete files/paths/tool observations when available, and lead reviews with findings before summary."#;
+
 pub fn run_agent(
     task: &str,
     model: &str,
@@ -141,7 +143,7 @@ pub(super) fn run_agent_with_chat_handler(
     cancel: Option<CancellationToken>,
     mut chat: impl FnMut(&[Message], &str, Option<f32>) -> Result<String, String>,
 ) -> Result<AgentOutcome, String> {
-    let workspace = Workspace::new(config.root)?;
+    let workspace = Workspace::new_with_root_note(config.root, config.root_note)?;
     let prepared_task = commit_audit::prepare_task(task, &workspace.root);
     let mut messages = vec![
         system_message(system_prompt(&workspace.root)),
@@ -282,6 +284,7 @@ pub(super) fn run_agent_with_chat_handler(
             });
             messages.push(tool_message(tool_call_id(step, index, tool), result_text));
         }
+        messages.push(system_message(FOLLOWUP_STYLE_REMINDER));
     }
 
     let transcript_path = write_transcript(&workspace.root, &transcript)?;

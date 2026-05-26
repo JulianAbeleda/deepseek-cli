@@ -61,16 +61,36 @@ pub(in crate::repl::chat) fn task_root_for_prompt(
     prompt: &str,
     selected_root: Option<&Path>,
 ) -> Option<PathBuf> {
-    infer_natural_root(prompt)
-        .or_else(|| selected_root.map(Path::to_path_buf))
-        .or_else(|| effective_workspace_root(None))
+    task_root_for_prompt_with_source(prompt, selected_root).map(|resolved| resolved.path)
 }
 
+pub(in crate::repl::chat) fn task_root_for_prompt_with_source(
+    prompt: &str,
+    selected_root: Option<&Path>,
+) -> Option<ResolvedRoot> {
+    infer_natural_root_with_source(prompt)
+        .or_else(|| {
+            selected_root.map(|path| ResolvedRoot {
+                path: path.to_path_buf(),
+                source: RootSource::Selected,
+            })
+        })
+        .or_else(|| effective_workspace_root_with_source(None))
+}
+
+#[cfg(test)]
 pub(in crate::repl::chat) fn model_decided_root_for_prompt(
     prompt: &str,
     selected_root: Option<&Path>,
 ) -> Option<PathBuf> {
     task_root_for_prompt(prompt, selected_root)
+}
+
+pub(in crate::repl::chat) fn model_decided_root_for_prompt_with_source(
+    prompt: &str,
+    selected_root: Option<&Path>,
+) -> Option<ResolvedRoot> {
+    task_root_for_prompt_with_source(prompt, selected_root)
 }
 
 pub(in crate::repl::chat) fn should_clarify_model_decided_root(prompt: &str) -> bool {
@@ -85,16 +105,24 @@ pub(in crate::repl::chat) fn should_clarify_model_decided_root(prompt: &str) -> 
         )
 }
 
+#[cfg(test)]
 pub(in crate::repl::chat) fn workspace_agent_root_for_prompt(
     prompt: &str,
     selected_root: Option<&Path>,
 ) -> Option<PathBuf> {
+    workspace_agent_root_for_prompt_with_source(prompt, selected_root).map(|resolved| resolved.path)
+}
+
+pub(in crate::repl::chat) fn workspace_agent_root_for_prompt_with_source(
+    prompt: &str,
+    selected_root: Option<&Path>,
+) -> Option<ResolvedRoot> {
     if is_workspace_chat_followup(&normalize_workspace_prompt(prompt)) {
         return None;
     }
-    infer_natural_root(prompt).or_else(|| {
+    infer_natural_root_with_source(prompt).or_else(|| {
         is_workspace_agent_prompt(prompt)
-            .then(|| effective_workspace_root(selected_root))
+            .then(|| effective_workspace_root_with_source(selected_root))
             .flatten()
     })
 }

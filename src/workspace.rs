@@ -1,5 +1,73 @@
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RootSource {
+    Exact,
+    Fuzzy { requested: String, matched: String },
+    Selected,
+    Cwd,
+}
+
+impl RootSource {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Exact => "explicit",
+            Self::Fuzzy { .. } => "fuzzy",
+            Self::Selected => "explicit",
+            Self::Cwd => "cwd",
+        }
+    }
+
+    pub(crate) fn fuzzy_note(&self) -> Option<String> {
+        match self {
+            Self::Fuzzy { requested, matched } if matched.is_empty() => {
+                Some(format!("matched: {requested}"))
+            }
+            Self::Fuzzy { requested, matched } => {
+                Some(format!("matched: {requested} -> {matched}"))
+            }
+            _ => None,
+        }
+    }
+
+    fn merge(self, next: RootSource) -> RootSource {
+        match (self, next) {
+            (
+                RootSource::Fuzzy { requested, matched },
+                RootSource::Fuzzy {
+                    requested: next_requested,
+                    matched: next_matched,
+                },
+            ) => RootSource::Fuzzy {
+                requested: format!("{requested} -> {matched}; {next_requested} -> {next_matched}"),
+                matched: String::new(),
+            },
+            (RootSource::Fuzzy { requested, matched }, _) => {
+                RootSource::Fuzzy { requested, matched }
+            }
+            (_, RootSource::Fuzzy { requested, matched }) => {
+                RootSource::Fuzzy { requested, matched }
+            }
+            (_, source) => source,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedRoot {
+    pub(crate) path: PathBuf,
+    pub(crate) source: RootSource,
+}
+
+impl ResolvedRoot {
+    fn exact(path: PathBuf) -> Self {
+        Self {
+            path,
+            source: RootSource::Exact,
+        }
+    }
+}
+
 fn workspace_root() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -13,26 +81,47 @@ pub(crate) fn effective_workspace_root(selected_root: Option<&Path>) -> Option<P
     selected_root.map(Path::to_path_buf).or_else(workspace_root)
 }
 
+pub(crate) fn effective_workspace_root_with_source(
+    selected_root: Option<&Path>,
+) -> Option<ResolvedRoot> {
+    selected_root
+        .map(|path| ResolvedRoot {
+            path: path.to_path_buf(),
+            source: RootSource::Selected,
+        })
+        .or_else(|| {
+            workspace_root().map(|path| ResolvedRoot {
+                path,
+                source: RootSource::Cwd,
+            })
+        })
+}
+
+#[cfg(test)]
 pub(crate) fn infer_natural_root(prompt: &str) -> Option<PathBuf> {
+    infer_natural_root_with_source(prompt).map(|resolved| resolved.path)
+}
+
+pub(crate) fn infer_natural_root_with_source(prompt: &str) -> Option<ResolvedRoot> {
     if let Ok(Some(root)) = parse_arrow_chain_root(prompt) {
         return Some(root);
     }
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let lowered = prompt.to_lowercase();
     if lowered.contains("desktop") {
-        return Some(home.join("Desktop"));
+        return Some(ResolvedRoot::exact(home.join("Desktop")));
     }
     if lowered.contains("downloads") {
-        return Some(home.join("Downloads"));
+        return Some(ResolvedRoot::exact(home.join("Downloads")));
     }
     if lowered.contains("documents") {
-        return Some(home.join("Documents"));
+        return Some(ResolvedRoot::exact(home.join("Documents")));
     }
     if lowered.contains("env folder")
         || lowered.contains("env directory")
         || lowered.contains("my env")
     {
-        return Some(home.join("env"));
+        return Some(ResolvedRoot::exact(home.join("env")));
     }
     None
 }
@@ -42,15 +131,26 @@ pub(crate) fn parse_navigation_request(prompt: &str) -> Result<Option<PathBuf>, 
     parse_navigation_request_from(prompt, None)
 }
 
+#[cfg(test)]
 pub(crate) fn parse_navigation_request_from(
     prompt: &str,
     base_root: Option<&Path>,
 ) -> Result<Option<PathBuf>, String> {
+    parse_navigation_request_with_source(prompt, base_root).map(|root| root.map(|root| root.path))
+}
+
+pub(crate) fn parse_navigation_request_with_source(
+    prompt: &str,
+    base_root: Option<&Path>,
+) -> Result<Option<ResolvedRoot>, String> {
     if has_arrow_chain_trailing_task(prompt) {
         return Ok(None);
     }
     if let Some(parsed) = parse_arrow_chain_root_with_task(prompt, base_root)? {
-        return Ok((!parsed.has_trailing_task).then_some(parsed.root));
+        return Ok((!parsed.has_trailing_task).then_some(ResolvedRoot {
+            path: parsed.root,
+            source: parsed.source,
+        }));
     }
     let prompt = prompt.trim();
     let lowered = prompt.to_lowercase();
@@ -62,11 +162,20 @@ pub(crate) fn parse_navigation_request_from(
         return Ok(None);
     }
     if let Some(root) = navigation_alias_root(target) {
-        return canonical_dir(root).map(Some);
+        return canonical_dir(root).map(|path| Some(ResolvedRoot::exact(path)));
     }
     let path = expand_path(target, base_root);
     if path.is_dir() {
-        return canonical_dir(path).map(Some);
+        return canonical_dir(path).map(|path| Some(ResolvedRoot::exact(path)));
+    }
+    if !explicit_path && !looks_like_path_target(target) {
+        if let Some(base) = base_root {
+            match fuzzy_child_dir(base, target) {
+                Ok(root) => return Ok(Some(root)),
+                Err(err) if err.contains("ambiguous") => return Err(err),
+                Err(_) => {}
+            }
+        }
     }
     if explicit_path || looks_like_path_target(target) {
         return Err(format!("{} is not a directory", path.display()));
@@ -236,10 +345,16 @@ pub(crate) fn has_arrow_chain_trailing_task(prompt: &str) -> bool {
 struct ArrowChainRoot {
     root: PathBuf,
     has_trailing_task: bool,
+    source: RootSource,
 }
 
-fn parse_arrow_chain_root(prompt: &str) -> Result<Option<PathBuf>, String> {
-    parse_arrow_chain_root_with_task(prompt, None).map(|parsed| parsed.map(|parsed| parsed.root))
+fn parse_arrow_chain_root(prompt: &str) -> Result<Option<ResolvedRoot>, String> {
+    parse_arrow_chain_root_with_task(prompt, None).map(|parsed| {
+        parsed.map(|parsed| ResolvedRoot {
+            path: parsed.root,
+            source: parsed.source,
+        })
+    })
 }
 
 fn parse_arrow_chain_root_with_task(
@@ -266,10 +381,23 @@ fn parse_arrow_chain_root_with_task(
         return Ok(None);
     }
 
+    let mut source = RootSource::Exact;
     let mut root = if let Some(root) = navigation_alias_root(target) {
         canonical_dir(root)?
     } else {
-        canonical_dir(expand_path(target, base_root))?
+        let path = expand_path(target, base_root);
+        if path.is_dir() {
+            canonical_dir(path)?
+        } else if !looks_like_path_target(target) {
+            let base = base_root
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let resolved = fuzzy_child_dir(&base, target)?;
+            source = source.merge(resolved.source);
+            resolved.path
+        } else {
+            canonical_dir(path)?
+        }
     };
     let mut has_task = false;
 
@@ -298,6 +426,19 @@ fn parse_arrow_chain_root_with_task(
             root = canonical_dir(child_path)?;
             continue;
         }
+        if !looks_like_path_target(child) {
+            match fuzzy_child_dir(&root, child) {
+                Ok(resolved) => {
+                    root = resolved.path;
+                    source = source.merge(resolved.source);
+                    continue;
+                }
+                Err(err) if index + 1 != parts.len() || !is_trailing_instruction_segment(part) => {
+                    return Err(err);
+                }
+                Err(_) => {}
+            }
+        }
         if index + 1 == parts.len() && is_trailing_instruction_segment(part) {
             has_task = true;
             break;
@@ -308,6 +449,7 @@ fn parse_arrow_chain_root_with_task(
     Ok(Some(ArrowChainRoot {
         root,
         has_trailing_task: has_task,
+        source,
     }))
 }
 
@@ -364,6 +506,75 @@ fn canonical_dir(path: PathBuf) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+fn fuzzy_child_dir(root: &Path, requested: &str) -> Result<ResolvedRoot, String> {
+    let requested = clean_navigation_target(requested).trim();
+    if requested.len() < 3 || requested.split_whitespace().nth(1).is_some() {
+        return Err(format!(
+            "{} is not a directory",
+            root.join(requested).display()
+        ));
+    }
+    let root = canonical_dir(root.to_path_buf())?;
+    let requested_key = fuzzy_key(requested);
+    if requested_key.len() < 3 {
+        return Err(format!(
+            "{} is not a directory",
+            root.join(requested).display()
+        ));
+    }
+    let mut candidates = std::fs::read_dir(&root)
+        .map_err(|err| format!("{}: {err}", root.display()))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let score = fuzzy_dir_score(&requested_key, &fuzzy_key(&name));
+            (score >= 0.82).then_some((score, name, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .0
+            .partial_cmp(&left.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.1.cmp(&right.1))
+    });
+    let Some((score, matched, path)) = candidates.first().cloned() else {
+        return Err(format!(
+            "{} is not a directory",
+            root.join(requested).display()
+        ));
+    };
+    if candidates.get(1).is_some_and(|next| score - next.0 < 0.08) {
+        return Err(format!(
+            "{} is ambiguous; closest matches include {} and {}",
+            requested, matched, candidates[1].1
+        ));
+    }
+    Ok(ResolvedRoot {
+        path: canonical_dir(path)?,
+        source: RootSource::Fuzzy {
+            requested: requested.to_string(),
+            matched,
+        },
+    })
+}
+
+fn fuzzy_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn fuzzy_dir_score(requested: &str, candidate: &str) -> f64 {
+    if requested == candidate {
+        return 1.0;
+    }
+    strsim::normalized_levenshtein(requested, candidate)
+}
+
 pub(crate) fn root_status(root: Option<&Path>, explicit: bool) -> String {
     match root {
         Some(root) => format!(
@@ -371,6 +582,24 @@ pub(crate) fn root_status(root: Option<&Path>, explicit: bool) -> String {
             root.display(),
             if explicit { "explicit" } else { "cwd" }
         ),
+        None => "root: unset\nroot-source: none\nUse /root <path> before running workspace tasks from $HOME.\n".to_string(),
+    }
+}
+
+pub(crate) fn root_status_with_source(root: Option<&ResolvedRoot>) -> String {
+    match root {
+        Some(root) => {
+            let mut status = format!(
+                "root: {}\nroot-source: {}\n",
+                root.path.display(),
+                root.source.label()
+            );
+            if let Some(note) = root.source.fuzzy_note() {
+                status.push_str(&note);
+                status.push('\n');
+            }
+            status
+        }
         None => "root: unset\nroot-source: none\nUse /root <path> before running workspace tasks from $HOME.\n".to_string(),
     }
 }
@@ -396,9 +625,10 @@ pub(crate) fn path_boundary_clarify_text(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        has_arrow_chain_trailing_task, infer_natural_root, parse_navigation_request,
-        parse_navigation_request_from, parse_root_command, path_boundary_clarify_text, root_status,
-        update_selected_root_from,
+        has_arrow_chain_trailing_task, infer_natural_root, infer_natural_root_with_source,
+        parse_navigation_request, parse_navigation_request_from,
+        parse_navigation_request_with_source, parse_root_command, path_boundary_clarify_text,
+        root_status, update_selected_root_from, RootSource,
     };
     use crate::test_support::env_lock;
     use std::fs;
@@ -639,6 +869,60 @@ mod tests {
         } else {
             std::env::remove_var("HOME");
         }
+    }
+
+    #[test]
+    fn arrow_chain_task_can_fuzzy_match_directory_segments() {
+        let _guard = env_lock();
+        let root = tempfile::tempdir().unwrap();
+        let structure = root.path().join("env").join("pkos_v0.2").join("structure");
+        fs::create_dir_all(&structure).unwrap();
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", root.path());
+
+        let resolved = infer_natural_root_with_source(
+            "go to my env -> pkosv2 -> structure. find your purpose",
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved.path.as_path(),
+            structure.canonicalize().unwrap().as_path()
+        );
+        assert_eq!(
+            resolved.source,
+            RootSource::Fuzzy {
+                requested: "pkosv2".to_string(),
+                matched: "pkos_v0.2".to_string(),
+            }
+        );
+
+        if let Some(previous_home) = previous_home {
+            std::env::set_var("HOME", previous_home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn fuzzy_navigation_rejects_ambiguous_matches() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("pkos-v2")).unwrap();
+        fs::create_dir_all(root.path().join("pkos_v2")).unwrap();
+
+        let err =
+            parse_navigation_request_with_source("go to pkosv2", Some(root.path())).unwrap_err();
+
+        assert!(err.contains("ambiguous"), "{err}");
+    }
+
+    #[test]
+    fn explicit_navigation_and_root_commands_do_not_fuzzy_match() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("pkos_v0.2")).unwrap();
+
+        assert!(parse_navigation_request_from("cd pkosv2", Some(root.path())).is_err());
+        assert!(update_selected_root_from("pkosv2", Some(root.path())).is_err());
     }
 
     #[test]

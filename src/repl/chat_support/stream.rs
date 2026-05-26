@@ -1,8 +1,9 @@
 use super::super::*;
 
-pub(in crate::repl::chat) fn run_agent_streaming(
+pub(in crate::repl::chat) fn run_agent_streaming_with_root_note(
     prompt: &str,
     root: PathBuf,
+    root_note: Option<String>,
     model: &str,
     temperature: Option<f32>,
     sender: Sender<TurnEvent>,
@@ -21,10 +22,16 @@ pub(in crate::repl::chat) fn run_agent_streaming(
         prompt,
         model,
         temperature,
-        agent::AgentRunOptions::new(agent::AgentConfig::new(root, agent::DEFAULT_MAX_STEPS))
-            .approval_mode(agent::ApprovalMode::External)
-            .quiet_cache(true)
-            .cancel(cancel),
+        {
+            let mut config = agent::AgentConfig::new(root, agent::DEFAULT_MAX_STEPS);
+            if let Some(root_note) = root_note {
+                config = config.root_note(root_note);
+            }
+            agent::AgentRunOptions::new(config)
+                .approval_mode(agent::ApprovalMode::External)
+                .quiet_cache(true)
+                .cancel(cancel)
+        },
         |step| {
             let _ = sender.send(TurnEvent::ToolStep(step));
         },

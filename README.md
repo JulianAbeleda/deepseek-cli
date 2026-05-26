@@ -15,13 +15,15 @@ for talking to DeepSeek models.
 
 ## Prompting Model
 
-This version of DeepSeek Arkey encourages declarative prompts for agent actions.
-Direct statements such as `Write this in Python` or `Develop this code` are
-treated as action-oriented requests. Questions such as `Can you grade it?` are
-treated as requests to think, evaluate, or explain.
+This version of DeepSeek Arkey favors direct, workspace-aware routing for agent
+actions. Direct statements such as `Write this in Python` or `Develop this code`
+are treated as action-oriented requests. Polite requests such as
+`Can you create this file?` can also route to the agent path when a workspace
+root is available.
 
 The goal is to make prompting more token-efficient. Say what you want the agent
-to do when you want action. Ask a question when you want analysis.
+to do when you want action. Ask clearly explanatory questions when you want
+analysis instead of workspace execution.
 
 The main exception is current information. Prompts such as `What's the latest
 news?` can invoke internet retrieval because the answer depends on fresh
@@ -121,12 +123,15 @@ If you want a DeepSeek TUI where you stay in the loop and review what your AI is
 
 ## Changelog
 
+- `v1.5.0` adds approval-gated file creation, follow-up style reminders, fuzzy
+  arrow-chain workspace routing, dotted trailing-task routing, and fail-closed
+  ambiguity handling.
 - `v1.4.0` adds native provider tool calls, compact pasted composer context,
   history-safe paste recall, and arrow-chain workspace navigation.
 - `v1.3.0` added direct agent routing, dock stability fixes, transcript
   hardening, streaming cancellation, and the Homebrew tap release.
 - Read the full release notes in the
-  [changelog](./CHANGELOG.md#v140---native-tool-calls-and-composer-paste-context).
+  [changelog](./CHANGELOG.md#v150---file-creation-and-fuzzy-workspace-routing).
 
 ## License
 

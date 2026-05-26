@@ -3,6 +3,38 @@
 This changelog tracks public release notes. Older `Phase` entries are internal
 development milestones and may not represent every implementation phase.
 
+## v1.5.0 - File Creation and Fuzzy Workspace Routing
+
+Summary:
+
+- Added approval-gated `create_file` support so agents can request new files
+  directly instead of falling back to shell heredocs or saying file creation is
+  unavailable.
+- Kept file creation under the same user-in-the-loop approval model as shell
+  commands and patch edits, including denial handling and root-scoped approval
+  behavior.
+- Added follow-up style reminders after tool rounds and retry paths so final
+  agent answers keep the expected concise Markdown shape across longer turns.
+- Added fuzzy workspace routing for arrow-chain prompts such as
+  `go to my env -> pkosv2 -> structure. find your purpose`, while exact matches
+  still win first.
+- Added fuzzy handling for dotted trailing-task syntax such as
+  `go to my env -> pkosv2. find your purpose`.
+- Made ambiguous fuzzy route matches fail closed with a root error instead of
+  silently choosing a directory or falling back to a parent root.
+- Expanded dock approval and routing smoke coverage for create-file approvals,
+  fuzzy route disclosure, and ambiguous dotted-route failures.
+
+Validation:
+
+```bash
+cargo fmt --check
+cargo check --offline
+cargo test --offline
+cargo build --release --offline --bins
+python3 scripts/phase12-dock-approval-smoke.py --binary target/release/deepseek-arkey
+```
+
 ## v1.4.0 - Native Tool Calls and Composer Paste Context
 
 Summary:

@@ -97,8 +97,13 @@ def write_slow_fake_curl(directory):
             import time
 
             config = sys.stdin.read()
+            has_tool_result = (
+                "Tool result for step" in config
+                or '"role":"tool"' in config
+                or '\\"role\\":\\"tool\\"' in config
+            )
 
-            if "Tool result for step" in config:
+            if has_tool_result:
                 time.sleep(1.5)
                 decision = {
                     "final_answer": "## Listing Result\n\nfiles listed successfully\n\n- first streamed line\n\n- second streamed line\n\n- final stream marker"
@@ -138,8 +143,13 @@ def write_slow_second_call_fake_curl(directory):
             import time
 
             config = sys.stdin.read()
+            has_tool_result = (
+                "Tool result for step 1" in config
+                or '"role":"tool"' in config
+                or '\\"role\\":\\"tool\\"' in config
+            )
 
-            if "Tool result for step 1" in config:
+            if has_tool_result:
                 time.sleep(4.0)
                 decision = {"final_answer": "files listed after slow continuation"}
             else:

@@ -50,8 +50,13 @@ def write_fake_curl(directory):
             import sys
 
             config = sys.stdin.read()
+            has_tool_result = (
+                "Tool result for step" in config
+                or '"role":"tool"' in config
+                or '\\"role\\":\\"tool\\"' in config
+            )
 
-            if "Tool result for step" in config:
+            if has_tool_result:
                 decision = {
                     "final_answer": (
                         "## Findings\n\n"

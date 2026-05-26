@@ -39,7 +39,7 @@ def main():
         env["HOME"] = home
         command = [binary] if args.entrypoint == "default" else [binary, "chat"]
         prompt_fragment = "debug:"
-        response_fragment = "debug/manual backend"
+        response_fragment = "debug/manual"
         env[f"{args.name.upper()}_FORCE_TTY_SIZE"] = f"{COLS}x{ROWS}"
         env[f"{args.name.upper()}_DEBUG_STREAM_DELAY_MS"] = "10"
         subprocess.run([binary, "debug", "on"], env=env, check=True, stdout=subprocess.DEVNULL)

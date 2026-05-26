@@ -68,14 +68,23 @@ pub(in crate::repl::chat) fn task_root_for_prompt_with_source(
     prompt: &str,
     selected_root: Option<&Path>,
 ) -> Option<ResolvedRoot> {
-    infer_natural_root_with_source(prompt)
+    task_root_for_prompt_with_source_result(prompt, selected_root)
+        .ok()
+        .flatten()
+}
+
+pub(in crate::repl::chat) fn task_root_for_prompt_with_source_result(
+    prompt: &str,
+    selected_root: Option<&Path>,
+) -> Result<Option<ResolvedRoot>, String> {
+    Ok(infer_natural_root_with_source_result(prompt)?
         .or_else(|| {
             selected_root.map(|path| ResolvedRoot {
                 path: path.to_path_buf(),
                 source: RootSource::Selected,
             })
         })
-        .or_else(|| effective_workspace_root_with_source(None))
+        .or_else(|| effective_workspace_root_with_source(None)))
 }
 
 #[cfg(test)]
@@ -86,11 +95,19 @@ pub(in crate::repl::chat) fn model_decided_root_for_prompt(
     task_root_for_prompt(prompt, selected_root)
 }
 
+#[cfg(test)]
 pub(in crate::repl::chat) fn model_decided_root_for_prompt_with_source(
     prompt: &str,
     selected_root: Option<&Path>,
 ) -> Option<ResolvedRoot> {
     task_root_for_prompt_with_source(prompt, selected_root)
+}
+
+pub(in crate::repl::chat) fn model_decided_root_for_prompt_with_source_result(
+    prompt: &str,
+    selected_root: Option<&Path>,
+) -> Result<Option<ResolvedRoot>, String> {
+    task_root_for_prompt_with_source_result(prompt, selected_root)
 }
 
 pub(in crate::repl::chat) fn should_clarify_model_decided_root(prompt: &str) -> bool {
@@ -113,18 +130,28 @@ pub(in crate::repl::chat) fn workspace_agent_root_for_prompt(
     workspace_agent_root_for_prompt_with_source(prompt, selected_root).map(|resolved| resolved.path)
 }
 
+#[cfg(test)]
 pub(in crate::repl::chat) fn workspace_agent_root_for_prompt_with_source(
     prompt: &str,
     selected_root: Option<&Path>,
 ) -> Option<ResolvedRoot> {
+    workspace_agent_root_for_prompt_with_source_result(prompt, selected_root)
+        .ok()
+        .flatten()
+}
+
+pub(in crate::repl::chat) fn workspace_agent_root_for_prompt_with_source_result(
+    prompt: &str,
+    selected_root: Option<&Path>,
+) -> Result<Option<ResolvedRoot>, String> {
     if is_workspace_chat_followup(&normalize_workspace_prompt(prompt)) {
-        return None;
+        return Ok(None);
     }
-    infer_natural_root_with_source(prompt).or_else(|| {
+    Ok(infer_natural_root_with_source_result(prompt)?.or_else(|| {
         is_workspace_agent_prompt(prompt)
             .then(|| effective_workspace_root_with_source(selected_root))
             .flatten()
-    })
+    }))
 }
 
 pub(in crate::repl::chat) fn is_workspace_agent_prompt(prompt: &str) -> bool {

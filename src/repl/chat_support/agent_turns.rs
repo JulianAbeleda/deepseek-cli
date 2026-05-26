@@ -9,7 +9,7 @@ pub(in crate::repl::chat) fn spawn_docked_turn(
     legacy_routing: bool,
 ) -> InFlightTurn {
     if let Some(task) = commands::parse_agent_task_command(&prompt) {
-        if let Some(root) = task_root_for_prompt_with_source(task, selected_root) {
+        if let Ok(Some(root)) = task_root_for_prompt_with_source_result(task, selected_root) {
             if path_boundary_violation(task, &root.path).is_none() {
                 return spawn_agent_turn_with_root_note(
                     task.to_string(),
@@ -22,7 +22,9 @@ pub(in crate::repl::chat) fn spawn_docked_turn(
         }
     }
     if !legacy_routing {
-        if let Some(root) = model_decided_root_for_prompt_with_source(&prompt, selected_root) {
+        if let Ok(Some(root)) =
+            model_decided_root_for_prompt_with_source_result(&prompt, selected_root)
+        {
             if path_boundary_violation(&prompt, &root.path).is_none() {
                 return spawn_agent_turn_with_root_note(
                     prompt,

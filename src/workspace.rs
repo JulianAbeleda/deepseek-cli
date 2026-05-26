@@ -102,28 +102,39 @@ pub(crate) fn infer_natural_root(prompt: &str) -> Option<PathBuf> {
     infer_natural_root_with_source(prompt).map(|resolved| resolved.path)
 }
 
+#[cfg(test)]
 pub(crate) fn infer_natural_root_with_source(prompt: &str) -> Option<ResolvedRoot> {
-    if let Ok(Some(root)) = parse_arrow_chain_root(prompt) {
-        return Some(root);
+    infer_natural_root_with_source_result(prompt).ok().flatten()
+}
+
+pub(crate) fn infer_natural_root_with_source_result(
+    prompt: &str,
+) -> Result<Option<ResolvedRoot>, String> {
+    if prompt.contains("->") {
+        if let Some(root) = parse_arrow_chain_root(prompt)? {
+            return Ok(Some(root));
+        }
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Ok(None);
+    };
     let lowered = prompt.to_lowercase();
     if lowered.contains("desktop") {
-        return Some(ResolvedRoot::exact(home.join("Desktop")));
+        return Ok(Some(ResolvedRoot::exact(home.join("Desktop"))));
     }
     if lowered.contains("downloads") {
-        return Some(ResolvedRoot::exact(home.join("Downloads")));
+        return Ok(Some(ResolvedRoot::exact(home.join("Downloads"))));
     }
     if lowered.contains("documents") {
-        return Some(ResolvedRoot::exact(home.join("Documents")));
+        return Ok(Some(ResolvedRoot::exact(home.join("Documents"))));
     }
     if lowered.contains("env folder")
         || lowered.contains("env directory")
         || lowered.contains("my env")
     {
-        return Some(ResolvedRoot::exact(home.join("env")));
+        return Ok(Some(ResolvedRoot::exact(home.join("env"))));
     }
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -473,8 +484,10 @@ fn split_child_with_trailing_instruction(
         )));
     }
     if !looks_like_path_target(child) && is_trailing_instruction_segment(instruction) {
-        if let Ok(resolved) = fuzzy_child_dir(root, child) {
-            return Ok(Some((resolved, true)));
+        match fuzzy_child_dir(root, child) {
+            Ok(resolved) => return Ok(Some((resolved, true))),
+            Err(err) if err.contains("ambiguous") => return Err(err),
+            Err(_) => {}
         }
     }
     Ok(None)
@@ -635,9 +648,9 @@ pub(crate) fn path_boundary_clarify_text(root: &Path, path: &Path) -> String {
 mod tests {
     use super::{
         has_arrow_chain_trailing_task, infer_natural_root, infer_natural_root_with_source,
-        parse_navigation_request, parse_navigation_request_from,
-        parse_navigation_request_with_source, parse_root_command, path_boundary_clarify_text,
-        root_status, update_selected_root_from, RootSource,
+        infer_natural_root_with_source_result, parse_navigation_request,
+        parse_navigation_request_from, parse_navigation_request_with_source, parse_root_command,
+        path_boundary_clarify_text, root_status, update_selected_root_from, RootSource,
     };
     use crate::test_support::env_lock;
     use std::fs;
@@ -956,6 +969,28 @@ mod tests {
             parse_navigation_request_with_source("go to pkosv2", Some(root.path())).unwrap_err();
 
         assert!(err.contains("ambiguous"), "{err}");
+    }
+
+    #[test]
+    fn dotted_arrow_chain_task_rejects_ambiguous_fuzzy_final_segment() {
+        let _guard = env_lock();
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("env").join("pkos-v2")).unwrap();
+        fs::create_dir_all(root.path().join("env").join("pkos_v2")).unwrap();
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", root.path());
+
+        let err =
+            infer_natural_root_with_source_result("go to my env -> pkosv2. find your purpose")
+                .expect_err("ambiguous dotted fuzzy route should fail closed");
+
+        assert!(err.contains("ambiguous"), "{err}");
+
+        if let Some(previous_home) = previous_home {
+            std::env::set_var("HOME", previous_home);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     #[test]

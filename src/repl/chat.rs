@@ -19,10 +19,10 @@ use crate::session::{self, SessionState};
 use crate::terminal_markdown::render_terminal_markdown;
 use crate::ui;
 use crate::workspace::{
-    effective_workspace_root, effective_workspace_root_with_source, infer_natural_root_with_source,
-    parse_navigation_request_with_source, path_boundary_clarify_text, root_status,
-    root_status_with_source, update_selected_root, update_selected_root_from, ResolvedRoot,
-    RootSource,
+    effective_workspace_root, effective_workspace_root_with_source,
+    infer_natural_root_with_source_result, parse_navigation_request_with_source,
+    path_boundary_clarify_text, root_status, root_status_with_source, update_selected_root,
+    update_selected_root_from, ResolvedRoot, RootSource,
 };
 
 use super::commands;
@@ -572,19 +572,26 @@ fn run_interactive_chat_docked(model: &str, temperature: Option<f32>) -> Result<
             continue;
         }
         if !runtime_state.legacy_routing {
-            if let Some(root) =
-                model_decided_root_for_prompt_with_source(prompt, selected_root.as_deref())
+            match model_decided_root_for_prompt_with_source_result(prompt, selected_root.as_deref())
             {
-                if let Some(path) = path_boundary_violation(prompt, &root.path) {
-                    composer.print_above(&path_boundary_clarify_text(&root.path, &path))?;
+                Ok(Some(root)) => {
+                    if let Some(path) = path_boundary_violation(prompt, &root.path) {
+                        composer.print_above(&path_boundary_clarify_text(&root.path, &path))?;
+                        continue;
+                    }
+                    if root.source.fuzzy_note().is_some() {
+                        composer.print_above(&root_status_with_source(Some(&root)))?;
+                    }
+                }
+                Ok(None) if should_clarify_model_decided_root(prompt) => {
+                    composer.print_above(&clarify_route_text())?;
                     continue;
                 }
-                if root.source.fuzzy_note().is_some() {
-                    composer.print_above(&root_status_with_source(Some(&root)))?;
+                Ok(None) => {}
+                Err(err) => {
+                    composer.print_above(&format!("root error: {err}\n"))?;
+                    continue;
                 }
-            } else if should_clarify_model_decided_root(prompt) {
-                composer.print_above(&clarify_route_text())?;
-                continue;
             }
             active_tool_steps.clear();
             last_progress_text.clear();
@@ -600,27 +607,32 @@ fn run_interactive_chat_docked(model: &str, temperature: Option<f32>) -> Result<
             continue;
         }
 
-        if let Some(root) =
-            workspace_agent_root_for_prompt_with_source(prompt, selected_root.as_deref())
-        {
-            if let Some(path) = path_boundary_violation(prompt, &root.path) {
-                composer.print_above(&path_boundary_clarify_text(&root.path, &path))?;
+        match workspace_agent_root_for_prompt_with_source_result(prompt, selected_root.as_deref()) {
+            Ok(Some(root)) => {
+                if let Some(path) = path_boundary_violation(prompt, &root.path) {
+                    composer.print_above(&path_boundary_clarify_text(&root.path, &path))?;
+                    continue;
+                }
+                if root.source.fuzzy_note().is_some() {
+                    composer.print_above(&root_status_with_source(Some(&root)))?;
+                }
+                active_tool_steps.clear();
+                last_progress_text.clear();
+                context_scan_started = Some(start_context_scan(&mut composer, &active_tool_steps)?);
+                in_flight = Some(spawn_agent_turn_with_root_note(
+                    prompt.to_string(),
+                    root.path,
+                    root.source.fuzzy_note(),
+                    current_model.clone(),
+                    temperature,
+                ));
                 continue;
             }
-            if root.source.fuzzy_note().is_some() {
-                composer.print_above(&root_status_with_source(Some(&root)))?;
+            Ok(None) => {}
+            Err(err) => {
+                composer.print_above(&format!("root error: {err}\n"))?;
+                continue;
             }
-            active_tool_steps.clear();
-            last_progress_text.clear();
-            context_scan_started = Some(start_context_scan(&mut composer, &active_tool_steps)?);
-            in_flight = Some(spawn_agent_turn_with_root_note(
-                prompt.to_string(),
-                root.path,
-                root.source.fuzzy_note(),
-                current_model.clone(),
-                temperature,
-            ));
-            continue;
         }
 
         match classify_intent(
